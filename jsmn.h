@@ -99,6 +99,13 @@ JSMN_API void jsmn_init(jsmn_parser *parser);
 JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
                         jsmntok_t *tokens, unsigned int num_tokens);
 
+/**
+ * Run JSON parser. Unlike jsmn_parse it stops after a next complete JSON
+ * object is parsed.
+ */
+JSMN_API int jsmn_parse_next(jsmn_parser *parser, const char *js, size_t len,
+                             jsmntok_t *tokens, unsigned int num_tokens);
+
 #ifndef JSMN_HEADER
 /**
  * Allocates a fresh unused token from the token pool.
@@ -260,8 +267,9 @@ static int jsmn_parse_string(jsmn_parser *parser, const char *js, size_t len,
 /**
  * Parse JSON string and fill tokens.
  */
-JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
-                        jsmntok_t *tokens, unsigned int num_tokens) {
+static int jsmn_parse_full(jsmn_parser *parser, const char *js, size_t len,
+                           jsmntok_t *tokens, unsigned int num_tokens,
+                           int parse_next) {
   int r;
   int i;
   jsmntok_t *token;
@@ -342,19 +350,27 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
         }
       }
 #endif
+      if (parse_next && parser->toksuper == -1)
+        len = parser->pos;
       break;
     case '\"':
       r = jsmn_parse_string(parser, js, len, tokens, num_tokens);
       if (r < 0)
         return r;
       count++;
-      if (parser->toksuper != -1 && tokens != NULL)
-        tokens[parser->toksuper].size++;
+      if (parser->toksuper != -1) {
+        if (tokens != NULL)
+          tokens[parser->toksuper].size++;
+      } else if (parse_next) {
+        len = parser->pos;
+      }
       break;
     case '\t':
     case '\r':
     case '\n':
     case ' ':
+      if (parse_next && parser->toksuper == -1 && count > 0)
+        len = parser->pos;
       break;
     case ':':
       parser->toksuper = parser->toknext - 1;
@@ -409,8 +425,12 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
       if (r < 0)
         return r;
       count++;
-      if (parser->toksuper != -1 && tokens != NULL)
-        tokens[parser->toksuper].size++;
+      if (parser->toksuper != -1) {
+        if (tokens != NULL)
+          tokens[parser->toksuper].size++;
+      } else if (parse_next) {
+        len = parser->pos;
+      }
       break;
 
 #ifdef JSMN_STRICT
@@ -431,6 +451,20 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
   }
 
   return count;
+}
+
+JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, size_t len,
+                        jsmntok_t *tokens, unsigned int num_tokens) {
+  return jsmn_parse_full(parser, js, len, tokens, num_tokens, 0);
+}
+
+JSMN_API int jsmn_parse_next(jsmn_parser *parser, const char *js, size_t len,
+                             jsmntok_t *tokens, unsigned int num_tokens) {
+  int r;
+  r = jsmn_parse_full(parser, js, len, tokens, num_tokens, 1);
+  if (r >= 0)
+    parser->toknext = 0;
+  return r;
 }
 
 /**
